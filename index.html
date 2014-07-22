@@ -1,0 +1,665 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
+   "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<title>JavaScript Ephemeris - Main Page</title>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=ISO-8859-1">
+<meta name="Description" content="Implementation in JavaScript of Meeus ephemeris algorithms">
+<meta name="Keywords" content="Meeus,ephemeris,sun,moon,planets,astronomy,javascript,JavaScript">
+<link href="default.css" rel=stylesheet type="text/css">
+
+<!--
+// JavaScript by Peter Hayes http://www.aphayes.pwp.blueyonder.co.uk/
+// Copyright 2001-2013
+// This code is made freely available but please keep this notice.
+// I accept no liability for any errors in my coding but please
+// let me know of any errors you find. My address is on my home page.
+-->
+
+<script language="JavaScript" type="text/javascript" src="util.js">
+</script>
+<script language="JavaScript" type="text/javascript" src="datetime.js">
+</script>
+<!-- observer requires util.js for parsecol -->
+<script language="JavaScript" type="text/javascript" src="observer.js">
+</script>
+<script language="JavaScript" type="text/javascript" src="sun.js">
+</script>
+<script language="JavaScript" type="text/javascript" src="moon.js">
+</script>
+<script language="JavaScript" type="text/javascript" src="planets.js">
+</script>
+<script language="JavaScript" type="text/javascript" src="stars.js">
+</script>
+<script language="JavaScript" type="text/javascript" src="separation.js">
+</script>
+<script language="JavaScript" type="text/javascript" src="math.js">
+</script>
+
+<script language="JavaScript" type="text/javascript">
+
+// rewrite1 updates table1 date/time info
+
+function rewrite1() {
+  with (document.table1) {
+    place_name.value=observer.name;
+    local_date.value=datestring(observer);
+    civil_time.value=timestring(observer,false);
+    if (dst_check.checked==false) {
+      ut_offset.value=hmstring(Math.abs(observer.tz/60.0));
+    } else {
+      ut_offset.value=hmstring(Math.abs((observer.tz+60.0)/60.0));
+    }
+    julian.value=Math.round(100*jd(observer))/100;
+    var uts=UTstring(observer);
+    // equation of time
+    var obscopy=new Object();
+    for (var i in observer) obscopy[i] = observer[i];
+    obscopy.month=1;
+    obscopy.day=1;
+    var dd=jd0(observer.year,observer.month,observer.day)-
+           jd0(obscopy.year,obscopy.month,obscopy.day)+1;
+    var b=360.0*(dd-81)/365.0;
+    // equation of time in minutes
+    var eot=EoT(observer);
+    // local time
+    var lts=timestring(observer,true);
+    // If you change the times menu change this
+    // UT
+    if (sel_time_opt.options[0].selected) {
+      sel_time.value=uts;
+    }
+    // local time
+    if (sel_time_opt.options[1].selected) {
+      sel_time.value=lts;
+    }
+    // solar time
+    if (sel_time_opt.options[2].selected) {
+      var st=parsecol(lts)+eot/60.0;
+      if (dst_check.checked) st=st-1;
+      if (st < 0.0) st=24.0+st;
+      sel_time.value=hmsstring(st);
+    }
+    // local sidereal time
+    if (sel_time_opt.options[3].selected) {
+      var lstn=local_sidereal(observer);
+      var lstni=Math.floor(lstn);
+      var lsts=((lstni < 10) ? "0" : "") + lstni;
+      lstn=60*(lstn-lstni); lstni=Math.floor(lstn);
+      lsts+=((lstni < 10) ? ":0" : ":") + lstni;
+      lstn=60*(lstn-lstni); lstni=Math.floor(lstn);
+      lsts+=((lstni < 10) ? ":0" : ":") + lstni;
+      sel_time.value=lsts;
+    }
+    // If you change the time differences menu change this
+    // UTC-Civil
+    if (local_diff_opt.options[0].selected) {
+      var ld=parsecol(uts)-parsecol(civil_time.value);
+      if (ld < 0) ld+=24;
+      if (ld > 12) ld-=24;
+    }
+    // UTC-local time
+    if (local_diff_opt.options[1].selected) {
+      var ld=parsecol(uts)-parsecol(lts);
+      if (ld < 0) ld+=24;
+      if (ld > 12) ld-=24;
+    }
+    // Civil-local time
+    if (local_diff_opt.options[2].selected) {
+      var ld=parsecol(civil_time.value)-parsecol(lts);
+    // Can be wrong near midnight, a quick and dirty fix
+      if (ld >= 12) ld-=24.0;
+      if (ld <= 12) ld+=24.0;
+    }
+    // Equation of Time
+    if (local_diff_opt.options[3].selected) {
+      var ld=eot/60.0;
+    }
+    local_diff.value=hmsstring(ld);
+  }
+}
+
+// reset1 restores the tables to their default settings
+
+function reset1() {
+  var now = new Date();
+  // The observatory object holds local date and time,
+  // timezone correction in minutes with daylight saving if applicable,
+  // latitude and longitude
+  observer=new observatory(atlas[0],now);
+  
+  with (document.table1) {
+    Place.selectedIndex=0;
+    if (argstr.length > 1) {
+      // Location information passed by URL.
+      // Name is the name of the observers location
+      // Lat and Long are the latitude & longitude in degrees
+      // west is positive using Meeus's convention which conflicts with a
+      // 1982 IAU decision. We will use the IAU convention of EAST being
+      // POSITIVE for the query string and change accordingly
+      // TZ is in hours again with east positive and converted internally
+      // into minutes and sign reversed
+      var args = argstr.split('&');
+      var Name="Unknown";
+      var Lat=90.0;
+      var Lon=360.0;
+      var TZ=24;
+      var DST=false;
+      var DSTseen=(argstr.indexOf("DST=") != -1) ? true : false;
+      Place.selectedIndex=Place.options.length-1;
+      for (var i=0; i<args.length; i++) eval(unescape(args[i]));
+      var pattern = new RegExp(".*"+Name+".*");
+      for (var i = 0 ; i < atlas.length ; i++) {
+        if (pattern.test(atlas[i].name)) {
+          Place.selectedIndex = i;
+          observer=new observatory(atlas[i],now);
+          break;
+        }
+      }
+      observer.name=Name;
+      if (Lat <90.0) observer.latitude=Lat;
+      // See note above about longitude and time zone conventions
+      if (Lon<360.0) observer.longitude=-Lon;
+      if (TZ <=12) { observer.tz=-TZ*60.0; observer.dss=""; observer.dse=""; }
+    }
+    // Processed parameters passed by search string start to update table1
+    Latitude.value=llstring(observer.latitude);
+    North.options[(observer.latitude>=0.0)?0:1].selected=true;
+    Longitude.value=llstring(observer.longitude);
+    West.options[(observer.longitude>=0.0)?0:1].selected=true;
+    month_length[1]=leapyear(observer.year)?29:28;
+    if (observer.tz>=0) {
+      TZ_WE.options[0].selected=true;
+    } else {
+      TZ_WE.options[1].selected=true;
+    }
+    if (DSTseen) {
+      dst_check.checked=DST;
+    } else {
+      dst_check.checked=false;
+      var dst=checkdst(observer);
+      if (dst != 0) {
+        dst_check.checked=true;
+      }
+    }
+    // Now we know where we want to observe set local time to be
+    // equivalent to the PC time which may be in a different zone
+    if (dst_check.checked) observer.tz-=60.0;
+    var PCtime=now.getTime();  // ms since Jan 1 1970
+    var PCoffset=now.getTimezoneOffset()*60000;
+    // Calculate what PCtime would be for the observer
+    PCtime=PCtime+PCoffset-(observer.tz*60000);
+    var nd=new Date(PCtime);
+    observer.year = nd.getFullYear();
+    observer.month = nd.getMonth()+1;
+    observer.day = nd.getDate();
+    observer.hours = nd.getHours();
+    observer.minutes = nd.getMinutes();
+    observer.seconds = nd.getSeconds();
+    sel_time_opt[0].selected=true;
+    local_diff_opt[0].selected=true;
+    Times.options[2].selected=true;
+    Step.options[0].selected=true;
+    ra.value="00:00.0"; dec.value="+00:00";
+    alt.value=""; az.value="";
+  }
+  rewrite1(); convertra();
+}
+
+// updatelocal handles changes to the time or date fields in table1
+// 2 digit years are allowed using the Y2K fix of >50 implies 19xx.
+// Attempts to allow for changes in daylight saving time
+
+function updatelocal(timezone) {
+  var lastdst=checkdst(observer);
+  with (document.table1) {
+    if (timezone) {
+      observer.tz=60.0*parsecol(ut_offset.value); 
+      if (TZ_WE.options[1].selected) observer.tz=-observer.tz;
+      if (dst_check.checked) observer.tz-=60.0;
+    } else {
+      var col1=local_date.value.indexOf(":");
+      var col2=local_date.value.lastIndexOf(":");
+      var col3=local_date.value.length;
+      observer.year=parseInt(local_date.value.substring(0,col1),10);
+      if (observer.year < 100) {
+         alert("Years should be 4 digits long");
+         if (observer.year>50) {observer.year=observer.year+1900}
+         else                  {observer.year=observer.year+2000}
+      }
+      month_length[1]=leapyear(observer.year)?29:28;
+      observer.month=parseInt(local_date.value.substring(col1+1,col2),10);
+      observer.day=parseInt(local_date.value.substring(col2+1,col3),10);
+      if (observer.day > month_length[observer.month-1]) {
+         alert("There are not that many days in the month!");
+         observer.day = month_length[observer.month-1];
+      }
+      col1=civil_time.value.indexOf(":");
+      col2=civil_time.value.lastIndexOf(":");
+      col3=civil_time.value.length;
+      if (col1 <= 0) col1=col3;
+      if ((col2 <= 0) | (col2 == col1)) col2=col3;
+      observer.hours=parseInt(civil_time.value.substring(0,col1),10);
+      if (col2 > (col1+1)) {
+        observer.minutes=parseInt(civil_time.value.substring(col1+1,col2),10);
+      } else {
+        observer.minutes=0;
+      }
+      if (col3 > (col2+1)) {
+        observer.seconds=parseInt(civil_time.value.substring(col2+1,col3),10);
+      } else {
+        observer.seconds=0;
+      }
+      if ((Place.selectedIndex >= 0) && (Place.selectedIndex < atlas.length)) {
+        // check if the change crossed daylight saving boundary
+        var dst=checkdst(observer);
+        if (lastdst != dst) observer.tz+=(dst-lastdst);
+        if (dst == 0) {
+          dst_check.checked=false;
+        } else {
+          dst_check.checked=true;
+        }
+      }
+    }
+    rewrite1(); convertra();
+  }
+}
+
+// set12 sets the local time to noon or midnight and changes the date
+
+function set12(noon) {
+   if (noon) {
+     document.table1.civil_time.value="12:00:00";
+   } else {
+     document.table1.civil_time.value="00:00:00";
+     var year=observer.year;
+     var month=observer.month;
+     var day=observer.day;
+     day+=1;
+     if (day > month_length[month-1]) {
+       day-=month_length[month-1];
+       month+=1;
+       if (month==13) {
+         year+=1;
+         month=1;
+       }
+     }
+     var date="";
+     date=date+year+":";
+     date=date+month+":";
+     date=date+day;
+     document.table1.local_date.value=date;
+   }
+   updatelocal(false);
+}
+
+// jdtozdt handles julian day inputs
+
+function jdtozdt() {
+  var zdt=jdtocd(parseFloat(document.table1.julian.value)-observer.tz/1440.0);
+  document.table1.local_date.value=zdt[0]+":"+zdt[1]+":"+zdt[2];
+  document.table1.civil_time.value=zdt[4]+":"+zdt[5]+":"+zdt[6];
+  updatelocal(false);
+}
+
+// updateplace handles the place selection in table1
+
+function updateplace() {
+  with (document.table1) {
+    if ((Place.selectedIndex >= 0) && (Place.selectedIndex < atlas.length)) {
+      observer.name=atlas[Place.selectedIndex].name;
+      argstr="Name='"+observer.name+"'";
+      reset1();
+    } else {
+      alert("Please change latitude and / or longitude in the table");
+    }
+  }
+}
+
+// updatename handles changes to the place name in table1
+
+function updatename() {
+  with (document.table1) {
+    observer.name=place_name.value;
+    Place.options[(Place.options.length)-1].selected=true;
+  }
+}
+
+// updatell handles the latitude/longitude changes in table1
+// Need update to allow for floating point input
+
+function updatell() {
+  with (document.table1) {
+    Place.options[(Place.options.length)-1].selected=true;
+    var lat=parsecol(Latitude.value);
+    observer.latitude=North.options[0].selected?lat:-lat;
+    Latitude.value=llstring(observer.latitude);
+    var lon=parsecol(Longitude.value);
+    observer.longitude=West.options[0].selected?lon:-lon;
+    Longitude.value=llstring(observer.longitude);
+    observer.name="User Selected";    
+    rewrite1();
+  }
+}
+
+// noupdate protects certain fields
+
+function noupdate() {
+   alert("You can not change this field.\nPlease change the local date/time.");
+   rewrite1();
+}
+
+// convertra converts ra/dec to alt/az in table1
+
+function convertra() {
+   var ra=parsecol(document.table1.ra.value);
+   var dec=parsecol(document.table1.dec.value);
+   var altaz=radtoaa(ra,dec,observer);
+   document.table1.alt.value=anglestring(altaz[0],false);
+   document.table1.az.value=anglestring(altaz[1],true);
+}
+
+// convertaa converts alt/az to ra/dec in table1 written by Nick Reid
+
+function convertaa() {
+   var alt=parsecol(document.table1.alt.value);
+   var az=parsecol(document.table1.az.value);
+   var radec=aatorad(alt,az,observer);
+   document.table1.ra.value=hmdstring(radec[0]);
+   document.table1.dec.value=anglestring(radec[1],false);
+}
+
+</script>
+</head>
+
+<body>
+<h1 align="center">JavaScript Ephemeris</h1>
+<center>
+<a href="notes.html#COPY">Copyright &copy; Peter Hayes 1999-2014</a>.<br>
+Last updates - Very few updates now, code is stable.<br>
+             Works with <a href="notes.html#WEB">all tested browsers and hardware</a> except
+             google chrome on iOS7 on ipad.<br>
+             August 2013: Added GB:Manchester to observer.js<br>
+             December 2011: Slight change to sun.js to fit iPad screen<br>
+             April 2011: Correct stars.js for Capella.<br>
+<a href="notes.html#LINKS">Translations and similar sites</a><br>
+The links in the table will take you to the relevant help information.<br>
+Please inform me of any problems, e-mail details are on my <a href="../index.html#CONTACT">home page</a>.
+</center>
+<noscript>
+<p><center>
+<b><font size="+2">Please enable JavaScript to use this page.</font></b>
+</center>
+<p>
+</noscript>
+<hr noshade size="3" width="80%">
+<center>
+<form name="table1" action="javascript:void 0;">
+<table class="bluebox" border="1" cellpadding="5">
+<tr>
+<th colspan="3"><a href="notes.html#Place">Location for observations</a></th>
+<tr>
+<td align="center" colspan="2">Select&nbsp;from&nbsp;this&nbsp;list&nbsp;or&nbsp;enter&nbsp;below</td>
+<td align="center">
+<!-- The Place select is altered below by JavaScript -->
+<select name="Place" onchange= "updateplace()">
+<option>Select your home location</option>
+<option>unknown</option>
+</select></td>
+</tr>
+<tr>
+<td align="left">Name <input type="text" size="20" name="place_name" onchange="updatename()"></td>
+<td align="center">
+ <select name="North" onchange="updatell()">
+ <option>North</option>
+ <option>South</option>
+ </select>
+ <input type="text" size="9" name="Latitude" onchange="updatell()">
+</td>
+<td align="center">
+ <select name="West" onchange="updatell()">
+ <option>West</option>
+ <option>East</option>
+ </select>
+ <input type="text" size="9" name="Longitude" onchange="updatell()">
+</td>
+</tr>
+
+<tr>
+<th colspan="3"><a href="notes.html#Place">Date and time at location for observations</a></th>
+</tr>
+<tr>
+<td align="CENTER">Date <INPUT type="text" size="10" name="local_date"
+    value="" onchange="updatelocal(false)"></td>
+<td align="CENTER" colspan="2">
+  Civil Time <INPUT type="text" size="8" name= "civil_time" value="" onchange="updatelocal(false)">
+  Time Zone <INPUT type="text" size="6" name= "ut_offset" value="" onchange="updatelocal(true)">
+  <select name="TZ_WE" onchange="updatelocal(true)">
+    <option>West</option>
+    <option>East</option>
+  </select>
+ <input type="checkbox" name="dst_check" value="" onclick="updatelocal(true)">DST
+</td>
+</tr>
+
+<tr>
+<td align="center">Julian Date <input type="text" size="10" name= "julian"
+    value="" onchange="jdtozdt()"></td>
+<td align="center">
+ <select name="sel_time_opt" onchange="rewrite1()">
+ <option SELECTED>UTC Time</option>
+ <option>Local Time</option>
+ <option>Solar Time</option>
+ <option>Sidereal Time</option>
+ </select>
+ <INPUT type="text" size="9" name="sel_time" value="" onchange="noupdate()">
+</td>
+<td align="center">
+ <select name="local_diff_opt" onchange="rewrite1()">
+ <option SELECTED>UTC-Civil</option>
+ <option SELECTED>UTC-Local</option>
+ <option>Civil-Local</option>
+ <option>Eqn. of Time</option>
+ </select>
+ <INPUT type="text" size="9" name="local_diff" value="" onchange="noupdate()">
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+<input type="button" name="noon" value="Noon" onclick= "set12(true)">
+<input type="button" name="midnight" value="Midnight" onclick= "set12(false)">
+<input type="button" name="Default" value="Reset" 
+       onclick= "argstr = location.search.substring(1,location.search.length);reset1()">
+</td>
+</tr>
+<tr><td align="center" colspan="3">
+<b><a href="notes.html#Compute">Compute Ephemeris</a></b>
+<input type="button" name="sun" value="Sun"
+       onclick="doSun(observer,0)">
+<input type="button" name="moon" value="Moon"
+       onclick="doMoon(observer,false)">
+<input type="button" name="planets" value="Planets"
+       onclick="doPlanets(observer,0)">
+<input type="button" name="separation" value="Separation"
+       onclick="doAngles(observer)">
+<input type="button" name="stars" value="Bright Stars"
+       onclick="doStars(observer)">
+</td></tr>
+<tr><td align="center" colspan="3">
+<b>Compute Monthly Ephemeris</b>
+<input type="button" name="monthsun" value="Sun"
+       onclick="doSun(observer,2)">
+<input type="button" name="mmoon" value="Moon"
+       onclick="doMoon(observer,2)">
+<input type="button" name="mplanets" value="Planets"
+       onclick="doPlanets(observer,2)">
+</td></tr>
+<tr><td align="center" colspan="3">
+<b>Repeat Daily Ephemeris</b>
+<select name="Times">
+<option>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option> <option>6</option><option>7</option><option>8</option>
+<option>9</option><option>10</option> <option>11</option><option>12</option>
+<option>13</option><option>14</option><option>15</option> <option>16</option>
+<option>17</option><option>18</option><option>19</option><option>20</option>
+<option>21</option><option>22</option><option>23</option><option>24</option>
+<option>25</option> <option>26</option><option>27</option><option>28</option>
+<option>29</option><option>30</option><option>31</option>
+</select> times separated by
+<select name="Step">
+<option>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option> <option>6</option><option>7</option><option>8</option>
+<option>9</option><option>10</option> <option>11</option><option>12</option>
+<option>13</option><option>14</option><option>15</option> <option>16</option>
+<option>17</option><option>18</option><option>19</option><option>20</option>
+<option>21</option><option>22</option><option>23</option><option>24</option>
+<option>25</option> <option>26</option><option>27</option><option>28</option>
+<option>29</option><option>30</option><option>31</option>
+</select>&nbsp;days for
+<input type="button" name="sun" value="Sun"
+       onclick="doSun(observer,1)">
+<input type="button" name="moon" value="Moon"
+       onclick="doMoon(observer,true)">
+<input type="button" name="planets" value="Planets"
+       onclick="doPlanets(observer,1)">
+</td>
+</tr>
+</table>
+<table class="bluebox" border="1" cellpadding="5">
+<tr>
+<th colspan="3">User Defined Object</th>
+</tr>
+<tr>
+<td align="center">
+  RA <INPUT type="text" size="5" name="ra" value="00:00" onchange="convertra()">
+  Dec <INPUT type="text" size="6" name="dec" value="+00:00" onchange="convertra()">
+</td>
+<td align="center">
+<input type="button" name="convra" value="<-" onclick="convertaa()">
+<input type="button" name="convaa" value="->" onclick="convertra()">
+</td>
+<td align="center">
+  Alt <INPUT type="text" size="6" name="alt" value="00:00">
+  Az <INPUT type="text" size="6" name= "az" value="00:00">
+</td>
+</tr>
+</table>
+</form>
+</center>
+
+<!-- Initialize the tables in the form --> 
+
+<script type="text/javascript" language="JavaScript">
+   // Save location options passed via the URL
+   var argstr = location.search.substring(1,location.search.length);
+   with (document.table1) {
+      Place.options.length=0;
+      for (var i=0; i<atlas.length; i++) {
+        Place.options[Place.options.length]=new Option(atlas[i].name);
+      }
+      Place.options[Place.options.length]=new Option("unknown");
+   }
+   // reset1 will process options passed by URL
+   reset1();
+</script>
+<p>
+<b>Before using set your local details-</b>
+<ul>
+<li>If you type into the table press tab (-&gt;|) or return to update the table.
+<li>Set your location. You can select from the supplied list or change the
+    name, latitude &amp; longitude entries.<br>
+
+You can pass a location to this web page by adding a query string to the
+URL.  It should look something like these examples 
+<ul>
+<p>
+<table border="1" cellpadding="5" class=greybox>
+<tr><td>
+<a href="index.html?Name='Cheltenham'">Cheltenham</a></td>
+<td>?Name='Cheltenham'</td></tr>
+<tr><td>
+<a href="index.html?Name='My%20Home'&amp;Lat=51.88&amp;Lon=-2.12&amp;TZ=0&amp;DST=false">My Home in Winter</a>
+<td>?Name='My%20Home'&amp;Lat=51.88&amp;Lon=-2.12&amp;TZ=0&amp;DST=false</td></tr>
+
+<tr><td>
+<a href="index.html?Name='My%20Home'&amp;Lat=51.88&amp;Lon=-2.12&amp;TZ=0&amp;DST=true">My Home in Summer</a>
+<td>?Name='My%20Home'&amp;Lat=51.88&amp;Lon=-2.12&amp;TZ=0&amp;DST=true</td></tr>
+<tr><td>
+<a href="index.html?Name='Chippewa%20Falls'&amp;Lat=+44.93&amp;Lon=-91.39&amp;TZ=-6">
+Chippewa Falls</a>
+<td>?Name='Chippewa%20Falls'&amp;Lat=+44.93&amp;Lon=-91.39&amp;TZ=-6</td></tr>
+<tr><td>
+</table>
+
+<p>
+<li><b>Name</b> is any text string, note the way of putting a space in the examples.<br>
+The script will do a pattern match against it's known locations so you only need to supply
+the name for places in the supplied list.
+<li><b>Lat</b>itude is positive if North.
+<li><b>Long</b>itude and <b>T</b>ime <b>Z</b>one are positive if East
+of Greenwich. Do NOT include daylight saving time in the <b>TZ</b> use <b>DST</b>.
+</ul>
+<li>Check the required date (year:month:day), Civil Time, Time Zone, and
+    the Daylight Saving Time flag, which defaults to your computer clock
+    and change if necessary. The <b>Noon/Midnight/Reset</b> buttons read your computer
+    clock and attempt to work out if daylight saving is on.
+<li>Select the ephemeris computation you want. Start with the daily
+    ones, those covering several days are a bit slow.
+<li><B>Note</b> - The planetary positions appear to be accurate to about a minute of arc
+    out to Mars. The gravitational affects of Jupiter, Saturn and Uranus on each others orbits
+    are not allowed for, at worse this can be about a degree for the position of Saturn.<br>
+    For more details see the
+    <a href="http://stjarnhimlen.se/comp/tutorial.html#12">tutorial on computing planetary positions</a>
+</ul>
+I'm very impressed with the map interface provided by
+<A href="http://stephentrainor.com/tools/">The photographers Ephemeris</A>
+you can use it to get your location and Sun and Moon information.
+<p>
+The <a href="notes.html" target="notes"> Notes Page</a>
+includes &copy;&nbsp;copyright notices, usage notes, acknowledgements,
+references, and how to save a copy for your personal use.
+<p>
+If you want simple sun rise/set and moon phase routines
+<a href="../sun_moon.html">click here</a>.
+<p>
+<hr>
+<b>Latest changes:</b>
+<ul>
+  <li>11 April 2011: Correct Capella in stars.js (looks like was zeta Auriga in original code)
+  <li>06 January 2011: Correction to datetime.js to fix a typo.
+  <li>27 December 2010: Added Calgary to observer.js in anticipation of future changes.
+  <li>20 December 2010: Minor changes to stars.js so constellation is listed first.
+  <li> 22 April 2010 Correction to user.js for when DST changes on last day of month.
+  <li> 31 Dec 2009 small change to index.html if user changes latitude or longitude.
+  <li>18 March 2009 change to moon.js to print RA the same way.
+  <li>17 March 2009 changes in index.html, util.js, sun.js and planets.js to print RA minutes to 1 decimal place.
+  <li>11 March 2009 corrected observer.js for daylight saving time changes not on the last Sunday of the month
+  <li>13 August 2008 added and changed some sites based on stellarium sites list
+  <li> 21 April 2008 moved one line in index.html to correct DST
+  <li> Version 7.1 change to display the <b>local</b> time for the selected observatory.<br>
+  <em>If you have a local copy you need to reload index.html, observer.js, datetime.js &amp; util.js for
+      the version 7 changes</em>.
+  <ul>
+    <li>Removed the get date/time/zone button, use reset instead.
+    <li>Added code to reset1 to convert to observers local time
+  </ul>
+  <li> Version 7.0 support for user defined locations<br>
+    <ul>
+    <li>Thanks to the webmaster at <a href="http://www.stargazing.net/mas/">
+       Muskegon Astronomical Society</a> for suggesting this change and testing it.
+    <li>Revised updateplace to reset to location on URL
+    <li>Changed table1 to support user changing place name
+    <li>Added updatename function
+    <li>Changes to reset1, rewrite1 and updatell to support changes
+    <li>In observer.js re-wrote the observatory function and initial value of observer
+    <li>In util.js added llstring to convert latitude and longitude
+    </ul>
+</ul>
+See the <a href="notes.html#HISTORY" target="notes">history</a> section
+in the notes page for older changes.
+
+<hr>
+</body>
+</html>
+
+

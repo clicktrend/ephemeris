@@ -1,0 +1,26 @@
+body { font-family: Arial, Helvetica, sans-serif;
+       color:black;  background-color: #ffffcc}
+
+a:active  {color: red; text-decoration: underline; }
+a:link    {color: #0000EE; text-decoration: underline; }
+a:visited {color: #0000EE; text-decoration: underline; }
+
+h1 { text-align: center; color: #004186; }
+
+h2 { text-align: center; color: #004186; }
+
+h3 { color: #004186; }
+
+h4 { color: #004186; }
+
+.greybox { background-color: #E7E3E7; color: black; }
+
+.fixed_greybox {font-family: courier, monospace;
+                 background-color: #E7E3E7; color: black; }
+
+.bluebox { background-color: #C5E5FF; color: black; }
+
+.fixed_bluebox {font-family: courier, monospace;
+                 background-color: #C5E5FF; color: black; }
+
+
